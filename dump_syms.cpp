@@ -25,14 +25,23 @@
 
 #include "PDBParser.h"
 
+#include <iostream>
+
 int main(int argc, char** argv)
 {
 	if (argc != 2) {
 		fprintf(stderr, "Usage: dump_syms <pdb file>\n");
 		return 1;
 	}
-	google_breakpad::PDBParser parser;
-	parser.load(argv[1]);
-	parser.printBreakpadSymbols(stdout);
+	try {
+		google_breakpad::PDBParser parser;
+		parser.load(argv[1]);
+		parser.printBreakpadSymbols(stdout);
+	}
+	catch (std::exception& e)
+	{
+		std::cerr << e.what() << std::endl;
+		return 1;
+	}
 	return 0;
 }
