@@ -91,6 +91,22 @@ namespace Concurrency
 }
 #endif
 
+/*
+  Provide a std::to_string() if libstdc++ can't
+*/
+#if !defined(_GLIBCXX_USE_C99) || defined(_GLIBCXX_HAVE_BROKEN_VSWPRINTF)
+#include <sstream>
+namespace std
+{
+    template <typename T> std::string to_string(const T& n)
+    {
+        std::ostringstream stm;
+        stm << n;
+        return stm.str();
+    }
+}
+#endif /* !_GLIBCXX_USE_C99 || _GLIBCXX_HAVE_BROKEN_VSWPRINTF */
+
 namespace google_breakpad
 {
 
