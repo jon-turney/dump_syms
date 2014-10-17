@@ -1225,6 +1225,7 @@ PDBParser::readSectionHeaders(uint32_t headerStream, SectionHeaders& headers)
 void
 PDBParser::readOmaps(uint32_t omapStream, Omaps& omaps)
 {
+	DEBUG("Reading OMAP from stream %d\n", omapStream);
 	auto& hs = getStream(omapStream);
 
 	StreamReader reader(hs, *this);
