@@ -1022,13 +1022,23 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 		throw std::runtime_error("Implement me...");
 
 	// Get functions from the global stream. These have mangled names that are useful.
-	Globals globals;
+	Functions globals;
 	getGlobalFunctions(header->symRecordStream, sections, globals);
 
 	Functions functions;
 	for (auto& mod : modules)
 	{
 		getModuleFunctions(mod.info.data, functions);
+	}
+
+	if (modules.size() == 0)
+	{
+		// No modules had symbol information, so just use the functions
+		// found as global symbols
+		for (auto i = globals.begin(); i != globals.end(); i++)
+		{
+			functions.push_back(std::move(*i));
+		}
 	}
 
 	Concurrency::parallel_sort(functions.begin(), functions.end());
@@ -1080,7 +1090,10 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 		{
 			if (!updateParamSize(func, fpov1Data))
 			{
+#if 0
 				updateParamSize(func, globals);
+				// build map of offset -> global func ???
+#endif
 			}
 		}
 	}
@@ -1294,7 +1307,7 @@ PDBParser::getModuleFunctions(const DBIModuleInfo* module, Functions& funcs)
 }
 
 void
-PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Globals& globals)
+PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Functions& globals)
 {
 	DEBUG("symbol records stream %d\n", symRecStream);
 
@@ -1313,7 +1326,11 @@ PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& heade
 			if (rec->symType == 2)
 			{
 				DEBUG("leaftype %04x, symbol type %d, offset %08x, segment %04x, name %s\n", rec->leafType, rec->symType, rec->offset, rec->segment, name.data);
-				globals.insert(std::make_pair(rec->offset + headers[rec->segment - 1].VirtualAddress, std::move(name)));
+				FunctionRecord f(std::move(name));
+				f.typeIndex = 0;
+				f.offset = rec->offset;
+				f.segment = rec->segment;
+				globals.push_back(std::move(f));
 			}
 		}
 		else
@@ -1472,8 +1489,9 @@ PDBParser::updateParamSize(FunctionRecord& func, std::map<std::pair<uint32_t, ui
 	return false;
 }
 
+#if 0
 bool
-PDBParser::updateParamSize(FunctionRecord& func, Globals& globals)
+PDBParser::updateParamSize(FunctionRecord& func, Functions& globals)
 {
 	auto g = globals.find(func.offset);
 	if (g != globals.end())
@@ -1509,6 +1527,7 @@ PDBParser::updateParamSize(FunctionRecord& func, Globals& globals)
 	}
 	return false;
 }
+#endif
 
 void
 PDBParser::updateParamSize(FunctionRecord& func, const FPO_DATA& fpoData)
