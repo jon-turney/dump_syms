@@ -867,8 +867,8 @@ struct SymbolSource
 void
 PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod)
 {
-	const StreamPair& pair = getStream(DebugInfo);
 	DEBUG("reading DebugInfo stream %d \n", DebugInfoStream);
+	const StreamPair& pair = getStream(DebugInfoStream);
 	if (pair.size == 0)
 		throw std::runtime_error("Invalid DebugInfo stream");
 
