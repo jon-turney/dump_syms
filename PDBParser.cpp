@@ -43,6 +43,8 @@
 #include <stdexcept>
 #include <string.h>
 
+#define DEBUG(...) fprintf(stderr, __VA_ARGS__)
+
 #ifndef _WIN32
 #include <errno.h>
 
@@ -526,6 +528,9 @@ PDBParser::readRootStream()
 		return false;
 	}
 
+	DEBUG("pageSize %d, freePageMap %d, pagesUsed %d, directorySize %d, reserved %d\n",
+	       header->pageSize, header->freePageMap, header->pagesUsed, header->directorySize, header->reserved);
+
 	m_pageSize = header->pageSize;
 	m_numPages = header->pagesUsed;
 
@@ -535,9 +540,13 @@ PDBParser::readRootStream()
 
 	const uint32_t* rootIndices = (const uint32_t*)(m_base + sizeof(PDBHeader));
 	std::vector<uint32_t> rootPageList;
+	uint32_t rootPagesLeft = numRootPages;
 	for (uint32_t i = 0; i < numRootIndexPages; ++i) {
 		const uint32_t* rootPages = (const uint32_t*)(m_base + rootIndices[i] * m_pageSize);
+		DEBUG("root page index %d in page %x\n", i, rootIndices[i]);
 		rootPageList.insert(rootPageList.end(), rootPages, rootPages + (m_pageSize / sizeof(uint32_t)));
+		for (uint32_t i = 0; rootPagesLeft != 0; i++, rootPagesLeft--)
+			DEBUG("root page %d in page %x\n", numRootPages - rootPagesLeft, rootPageList[i]);
 	}
 
 	uint32_t pageIndex = 0;
@@ -549,6 +558,7 @@ PDBParser::readRootStream()
 	++pageOffset;
 
 	m_streams.reserve(numStreams);
+	DEBUG("number of streams %d\n", numStreams);
 
 	const uint32_t numItems = m_pageSize / sizeof(uint32_t);
 
@@ -561,6 +571,7 @@ PDBParser::readRootStream()
 			for (; streamIndex < numStreams && pageOffset < numItems; ++streamIndex, ++pageOffset)
 			{
 				uint32_t size = page[pageOffset];
+				DEBUG("stream %d, size %x\n", streamIndex, size);
 				if (size == 0xFFFFFFFF)
 					m_streams.push_back(StreamPair(0));
 				else
@@ -571,6 +582,7 @@ PDBParser::readRootStream()
 			if (pageOffset == numItems)
 			{
 				page = (const uint32_t*)(m_base + rootPageList[++pageIndex] * m_pageSize);
+				DEBUG("advancing to page %d\n", pageIndex);
 				pageOffset = 0;
 			}
 		} while (streamIndex < numStreams);
@@ -581,6 +593,7 @@ PDBParser::readRootStream()
 	for (uint32_t i = 0; i < numStreams; ++i)
 	{
 		uint32_t numPages = getNumPages(m_streams[i].size, m_pageSize);
+		DEBUG("stream %d, size %x, pages %d\n", i, m_streams[i].size, numPages);
 
 		if (numPages != 0)
 		{
@@ -591,12 +604,19 @@ PDBParser::readRootStream()
 			{
 				uint32_t num = std::min(numToCopy, numItems - pageOffset);
 				memcpy(m_streams[i].pageIndices.data() + numPages - numToCopy, page + pageOffset, sizeof(uint32_t) * num);
+
+				// for (uint32_t j = 0; j < num ; j++)
+				// {
+				// 	DEBUG("stream %d, page %d at page %x\n", i, j, *(uint32_t *)(m_streams[i].pageIndices.data() + numPages - numToCopy + j));
+				// }
+
 				numToCopy -= num;
 				pageOffset += num;
 
 				if (pageOffset == numItems)
 				{
 					page = (const uint32_t*)(m_base + rootPageList[++pageIndex] * m_pageSize);
+					DEBUG("advancing to page %d\n", pageIndex);
 					pageOffset = 0;
 				}
 			} while (numToCopy);
@@ -611,6 +631,9 @@ PDBParser::readRootStream()
 		auto nameIndexHeader = nameReader.read<NameIndexHeader>();
 		m_guid = nameIndexHeader->guid;
 
+		DEBUG("name header: version %d, timeDateStamp %d, age %d\n",
+		       nameIndexHeader->version, nameIndexHeader->timeDateStamp, nameIndexHeader->age);
+
 		uint32_t nameStart = nameReader.getOffset();
 
 		StreamReader mapReader(m_streams[1], *this);
@@ -622,9 +645,11 @@ PDBParser::readRootStream()
 		uint32_t okOffset = mapReader.getOffset();
 		uint32_t skip = *mapReader.read<uint32_t>().data;
 
+		DEBUG("name header: numOk %d, count %d, skip %d\n", numOk, count, skip);
+
 		if ((count >> 5) > skip)
 		{
-			fprintf(stderr, "Invalid name index\n");
+			fprintf(stderr, "Invalid name index (count)\n");
 			return false;
 		}
 
@@ -640,6 +665,7 @@ PDBParser::readRootStream()
 		}
 
 		mapReader.seek(deletedOffset + (deletedskip +1) * sizeof(uint32_t));
+
 		struct StringVal
 		{
 			uint32_t id;
@@ -656,6 +682,7 @@ PDBParser::readRootStream()
 			std::string name = nameReader.readString().data;
 			strupper((char*)name.c_str());
 
+			DEBUG("Name %s stream %d\n", name.c_str(), val->stream);
 			m_nameIndices.insert(std::make_pair(std::move(name), val->stream));
 
 			numOk--;
@@ -716,8 +743,10 @@ PDBParser::loadNameStream(NameStream& names)
 		if (id != 0)
 		{
 			DataPtr<char> data(nameStart + id);
-			if (data.data != nullptr)
+			if (data.data != nullptr) {
+				DEBUG("Index %d, string '%s'\n", id, data.data);
 				names.map.insert(std::make_pair(id, std::move(data)));
+			}
 		}
 	}
 }
@@ -725,6 +754,7 @@ PDBParser::loadNameStream(NameStream& names)
 PDBParser::TypeMap
 PDBParser::loadTypeStream()
 {
+	DEBUG("reading TypeInfo stream %d \n", TypeInfoStream);
 	auto& ts = getStream(TypeInfoStream);
 	if (ts.size == 0)
 		throw std::runtime_error("Invalid type info stream");
@@ -838,6 +868,7 @@ void
 PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod)
 {
 	const StreamPair& pair = getStream(DebugInfo);
+	DEBUG("reading DebugInfo stream %d \n", DebugInfoStream);
 	if (pair.size == 0)
 		throw std::runtime_error("Invalid DebugInfo stream");
 
@@ -845,6 +876,10 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 	auto header = reader.read<DBIHeader>();
 
 	printHeader(header.data, of, platform);
+
+	DEBUG("GlobalSymbol info stream is %d\n", header.data->gssymStream);
+	DEBUG("PublicSymbol info stream is %d\n", header.data->pssymStream);
+	DEBUG("SymbolRecord stream %d\n", header.data->symRecordStream);
 
 	uint32_t endOffset = reader.getOffset() + header->moduleSize;
 
@@ -891,10 +926,14 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 		auto objName = reader.readString();
 
 		if (dbInfo->stream != -1)
+		{
+			DEBUG("module %s object %s stream %d\n", modName.data, objName.data, dbInfo->stream);
 			modules.push_back(Module(std::move(dbInfo), std::move(modName), std::move(objName)));
+		}
 
 		reader.align(4);
 	}
+	DEBUG("%d modules with streams\n", modules.size());
 
 	reader.seek(reader.getOffset()
 				+ header->secConSize
@@ -904,6 +943,17 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 				+ header->ecInfoSize);
 
 	auto debugHeader = reader.read<DBIDebugHeader>();
+	DEBUG("FPO v1 stream %d\n", debugHeader->FPO);
+	DEBUG("exception %d\n", debugHeader->exception);
+	DEBUG("fixup %d\n", debugHeader->fixup);
+	DEBUG("omapToSource stream %d\n", debugHeader->omapToSource);
+	DEBUG("omapFromSource stream %d\n", debugHeader->omapFromSource);
+	DEBUG("sectionHdr %d\n", debugHeader->sectionHdr);
+	DEBUG("tokenRidMap %d\n", debugHeader->tokenRidMap);
+	DEBUG("XData %d\n", debugHeader->XData);
+	DEBUG("PData %d\n", debugHeader->PData);
+	DEBUG("FPO v2 stream %d \n", debugHeader->newFPO);
+	DEBUG("sectionHdrOriginal %d\n", debugHeader->sectionHdrOriginal);
 
 	// Get the PE headers so that we can offset the functions to their correct
 	// addresses in the actual executable
@@ -1135,6 +1185,7 @@ PDBParser::printHeader(const DBIHeader* header, FILE* of, const char* platform)
 void
 PDBParser::readSectionHeaders(uint32_t headerStream, SectionHeaders& headers)
 {
+	DEBUG("Reading section headers from stream %d\n", headerStream);
 	auto& hs = getStream(headerStream);
 
 	StreamReader reader(hs, *this);
@@ -1180,6 +1231,7 @@ PDBParser::getModuleFiles(const DBIModuleInfo* module, uint32_t& id, UniqueSrcFi
 void
 PDBParser::getModuleFunctions(const DBIModuleInfo* module, Functions& funcs)
 {
+	DEBUG("reading module info stream %d\n", module->stream);
 	const StreamPair& pair = getStream(module->stream);
 
 	StreamReader reader(pair, *this);
@@ -1244,6 +1296,8 @@ PDBParser::getModuleFunctions(const DBIModuleInfo* module, Functions& funcs)
 void
 PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Globals& globals)
 {
+	DEBUG("symbol records stream %d\n", symRecStream);
+
 	const StreamPair& pair = getStream(symRecStream);
 	StreamReader reader(pair, *this);
 
@@ -1258,6 +1312,8 @@ PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& heade
 			// Is function?
 			if (rec->symType == 2)
 			{
+				DEBUG("leaftype %04x, symbol type %d, address %08x (offset %08x, segment %04x), name %s\n", rec->leafType, rec->symType,
+				      rec->offset + headers[rec->segment - 1].VirtualAddress, rec->offset, rec->segment, name.data);
 				globals.insert(std::make_pair(rec->offset + headers[rec->segment - 1].VirtualAddress, std::move(name)));
 			}
 		}
