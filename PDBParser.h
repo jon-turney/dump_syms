@@ -147,7 +147,7 @@ public:
 		Root,
 		Streams,
 		TypeInfoStream,
-		DebugInfo
+		DebugInfoStream,
 	};
 
 	typedef std::function<const char*(const char*, size_t)> FileMod;
