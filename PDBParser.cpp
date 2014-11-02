@@ -1307,10 +1307,12 @@ PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& heade
 		if (len >= sizeof(GlobalRecord))
 		{
 			auto rec = reader.read<GlobalRecord>();
+			if (rec->leafType == 0x1009)
+				throw std::runtime_error("Global data_v2 records not handled!");
 			auto name = reader.read<char>(len - sizeof(GlobalRecord));
 
 			// Is function?
-			if (rec->symType == 2)
+			if (rec->leafType == 0x110e && rec->symType == 2)
 			{
 				DEBUG("leaftype %04x, symbol type %d, address %08x (offset %08x, segment %04x), name %s\n", rec->leafType, rec->symType,
 				      rec->offset + headers[rec->segment - 1].VirtualAddress, rec->offset, rec->segment, name.data);
