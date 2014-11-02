@@ -189,6 +189,7 @@ PDBParser::FunctionRecord& PDBParser::FunctionRecord::operator =(FunctionRecord&
 	std::swap(lineOffset, other.lineOffset);
 	std::swap(typeIndex, other.typeIndex);
 	std::swap(paramSize, other.paramSize);
+	std::swap(isMangledName, other.isMangledName);
 
 	return *this;
 }
@@ -1022,13 +1023,38 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 		throw std::runtime_error("Implement me...");
 
 	// Get functions from the global stream. These have mangled names that are useful.
-	Globals globals;
+	Functions globals;
 	getGlobalFunctions(header->symRecordStream, sections, globals);
 
 	Functions functions;
 	for (auto& mod : modules)
 	{
 		getModuleFunctions(mod.info.data, functions);
+	}
+
+	if (modules.size() == 0)
+	{
+		// No modules had symbol information, so just use the functions
+		// found as global symbols
+		for (auto i = globals.begin(); i != globals.end(); i++)
+		{
+			functions.push_back(std::move(*i));
+		}
+	} else {
+		// Annotate module functions with paramSize and name mangled
+		// information from globals
+		// XXX: don't do this in a terrible O(n^2) fashion!
+		for (auto i = functions.begin(); i != functions.end(); i++)
+		{
+			for (auto j = globals.begin(); j != globals.end(); j++)
+			{
+				if (strcmp(i->name.data, j->name.data) == 0) {
+					i->isMangledName = j->isMangledName;
+					i->paramSize = j->paramSize;
+					break;
+				}
+			}
+		}
 	}
 
 	Concurrency::parallel_sort(functions.begin(), functions.end());
@@ -1078,10 +1104,7 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 		func.offset += sections[func.segment - 1].VirtualAddress;
 		if (!updateParamSize(func, fpov2Data))
 		{
-			if (!updateParamSize(func, fpov1Data))
-			{
-				updateParamSize(func, globals);
-			}
+			updateParamSize(func, fpov1Data);
 		}
 	}
 
@@ -1294,7 +1317,7 @@ PDBParser::getModuleFunctions(const DBIModuleInfo* module, Functions& funcs)
 }
 
 void
-PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Globals& globals)
+PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Functions& globals)
 {
 	DEBUG("symbol records stream %d\n", symRecStream);
 
@@ -1316,7 +1339,58 @@ PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& heade
 			{
 				DEBUG("leaftype %04x, symbol type %d, address %08x (offset %08x, segment %04x), name %s\n", rec->leafType, rec->symType,
 				      rec->offset + headers[rec->segment - 1].VirtualAddress, rec->offset, rec->segment, name.data);
-				globals.insert(std::make_pair(rec->offset + headers[rec->segment - 1].VirtualAddress, std::move(name)));
+
+				int paramSize = 0;
+				std::string trimmed_name = name.data;
+
+				// stdcall and fastcall functions have their param size embedded in the decorated name
+				if ((trimmed_name[0] == '_') || (trimmed_name[0] == '@'))
+				{
+					char prefix = trimmed_name[0];
+					trimmed_name.erase(0, 1);
+
+					const char* p = strrchr(trimmed_name.c_str(), '@');
+					if (p)
+					{
+						char* end;
+						long val = strtol(p + 1, &end, 10);
+						if (*end == '\0')
+						{
+							// stdcall function
+							paramSize = val;
+							// fastcall functions accept up to 8 bytes of parameters in registers
+							if (prefix == '@')
+							{
+								if (val > 8)
+								{
+									paramSize -= 8;
+								}
+								else
+								{
+									paramSize = 0;
+								}
+							}
+						}
+						trimmed_name.erase(p - trimmed_name.c_str());
+					}
+				}
+				// extract function name from C++ mangled name
+				else if (trimmed_name[0] == '?')
+				{
+					trimmed_name.erase(0, 1);
+					const char* p = strchr(trimmed_name.c_str(), '@');
+					if (p)
+						trimmed_name.erase(p - trimmed_name.c_str());
+				}
+
+				FunctionRecord f(std::move(DataPtr<char>(strdup(trimmed_name.c_str()),true)));
+				f.typeIndex = 0;
+				f.offset = rec->offset;
+				f.segment = rec->segment;
+				f.paramSize = paramSize;
+				f.isMangledName = (name.data[0] == '?');
+				globals.push_back(std::move(f));
+
 			}
 		}
 		else
@@ -1390,7 +1464,8 @@ PDBParser::printFunctions(Functions& funcs, const TypeMap& tm, FILE* of)
 
 		if (func.typeIndex)
 		{
-			stringizeType(func.typeIndex, str, tm, IsTopLevel);
+			if (func.isMangledName)
+				stringizeType(func.typeIndex, str, tm, IsTopLevel);
 
 			temp.assign(func.name.data);
 			std::string::size_type pos;
@@ -1471,44 +1546,6 @@ PDBParser::updateParamSize(FunctionRecord& func, std::map<std::pair<uint32_t, ui
 	{
 		updateParamSize(func, *it->second.data);
 		return true;
-	}
-	return false;
-}
-
-bool
-PDBParser::updateParamSize(FunctionRecord& func, Globals& globals)
-{
-	auto g = globals.find(func.offset);
-	if (g != globals.end())
-	{
-		const char* name = g->second.data;
-		// stdcall and fastcall functions have their param size embedded in the decorated name
-		if (name[0] == '@' || name[0] == '_')
-		{
-			const char* p = strrchr(name, '@');
-			if (p && p != name)
-			{
-				char* end;
-				long val = strtol(p + 1, &end, 10);
-				if (*end == '\0')
-				{
-					func.paramSize = val;
-					// fastcall functions accept up to 8 bytes of parameters in registers
-					if (name[0] == '@')
-					{
-						if (val > 8)
-						{
-							func.paramSize -= 8;
-						}
-						else
-						{
-							func.paramSize = 0;
-						}
-					}
-					return true;
-				}
-			}
-		}
 	}
 	return false;
 }

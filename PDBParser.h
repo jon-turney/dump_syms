@@ -183,6 +183,7 @@ private:
 		uint32_t			lineOffset;
 		uint32_t			typeIndex;	// If this is non-zero, the function is a procedure, not a thunk (I don't know how to read thunk type info...)
 		uint32_t			paramSize;
+		bool				isMangledName;
 
 		FunctionRecord(uint32_t offset, uint32_t segment)
 			: segment(segment)
@@ -200,6 +201,7 @@ private:
 			, lineOffset(0)
 			, typeIndex(0)
 			, paramSize(0)
+			, isMangledName(false)
 		{}
 
 		bool operator <(const FunctionRecord& other) const
@@ -283,7 +285,6 @@ private:
 	typedef std::vector<FunctionRecord> Functions;
 	typedef std::unordered_map<uint32_t, TypeInfo> TypeMap;
 	typedef std::vector<SectionHeader> SectionHeaders;
-	typedef std::unordered_map<uint32_t, DataPtr<char>> Globals;
 	// If we decide to only support VC2013 we can use this.
 	//template<typename T>
 	//using FPODataMap = std::map<std::pair<uint32_t, uint32_t>, DataPtr<T>>;
@@ -318,14 +319,14 @@ private:
 	void getModuleFiles(const DBIModuleInfo* module, uint32_t& id, UniqueSrcFiles& unique, SrcFileIndex& fileIndex);
 	void printFiles(const SrcFileIndex& fileIndex, FILE* of);
 	void getModuleFunctions(const DBIModuleInfo* module, Functions& funcs);
-	void getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Globals& globals);
+	void getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& headers, Functions& globals);
 	void resolveFunctionLines(const DBIModuleInfo* module, Functions& funcs, const UniqueSrcFiles& unique, const SrcFileIndex& fileIndex);
 	void printFunctions(Functions& funcs, const TypeMap& tm, FILE* of);
 	template<typename T>
 	void readFPO(uint32_t fpoStream, std::map<std::pair<uint32_t, uint32_t>, DataPtr<T>>& fpoData);
 	template<typename T>
 	bool updateParamSize(FunctionRecord& func, std::map<std::pair<uint32_t, uint32_t>, DataPtr<T>>& fpoData);
-	bool updateParamSize(FunctionRecord& func, Globals& globals);
+	bool updateParamSize(FunctionRecord& func, Functions& globals);
 	void updateParamSize(FunctionRecord& func, const FPO_DATA& fpoData);
 	void updateParamSize(FunctionRecord& func, const FPO_DATA_V2& fpoData);
 	template<typename T>
