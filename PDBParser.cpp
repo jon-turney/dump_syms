@@ -1043,12 +1043,13 @@ PDBParser::printBreakpadSymbols(FILE* of, const char* platform, FileMod* fileMod
 	} else {
 		// Annotate module functions with paramSize and name mangled
 		// information from globals
-		// XXX: don't do this in a terrible O(n^2) fashion!
 		for (auto i = functions.begin(); i != functions.end(); i++)
 		{
+			DEBUG("looking for %s in globals\n", i->name.data);
 			for (auto j = globals.begin(); j != globals.end(); j++)
 			{
 				if (strcmp(i->name.data, j->name.data) == 0) {
+					DEBUG("match found: mangled %d paramSize %d\n", j->isMangledName, i->paramSize);
 					i->isMangledName = j->isMangledName;
 					i->paramSize = j->paramSize;
 					break;
@@ -1389,6 +1390,7 @@ PDBParser::getGlobalFunctions(uint16_t symRecStream, const SectionHeaders& heade
 				f.segment = rec->segment;
 				f.paramSize = paramSize;
 				f.isMangledName = (name.data[0] == '?');
+				DEBUG("trimmed name %s, mangled %d, paramSize %d\n", trimmed_name.c_str(), f.isMangledName, f.paramSize);
 				globals.push_back(std::move(f));
 
 			}
